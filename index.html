@@ -35,8 +35,6 @@
                     const iconSvg = lucide.createIcons();
                 }
             }, [name]);
-            // Fallback to basic spans if icons haven't loaded, 
-            // but we'll use a better approach for the app below.
             return <i data-lucide={name} className={className} style={{width: size, height: size}}></i>;
         };
 
@@ -50,11 +48,14 @@
                     const response = await fetch(url, options);
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                        const msg = errorData.error?.message || `HTTP error! status: ${response.status}`;
+                        // If it's a quota or billing error, don't retry immediately, just throw
+                        if (response.status === 403 || response.status === 402) throw new Error(msg);
+                        throw new Error(msg);
                     }
                     return await response.json();
                 } catch (err) {
-                    if (i === retries - 1) throw err;
+                    if (i === retries - 1 || err.message.includes("billed users")) throw err;
                     await new Promise(res => setTimeout(res, delays[i]));
                 }
             }
@@ -133,7 +134,8 @@
                 try {
                     let url, body;
                     if (mode === 'generate') {
-                        url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                        // Switched to imagen-3.0 which is more likely to be available on free tiers
+                        url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${apiKey}`;
                         body = { instances: { prompt: prompt.trim() }, parameters: { sampleCount: 1 } };
                     } else {
                         url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
@@ -162,7 +164,7 @@
                         const watermarked = await drawWatermark(base64);
                         setResultImage(watermarked);
                     } else {
-                        throw new Error("No image generated.");
+                        throw new Error("No image generated. The model returned an empty response.");
                     }
                 } catch (err) {
                     setError(err.message);
@@ -222,7 +224,15 @@
                                         placeholder="Describe your vision..."
                                         className="w-full h-24 bg-black border border-gray-800 rounded-lg p-2 text-xs font-mono text-cyan-50 focus:border-cyan-500/50 outline-none resize-none"
                                     />
-                                    {error && <p className="text-[10px] text-red-400 bg-red-900/10 p-2 rounded border border-red-900/20">{error}</p>}
+                                    {error && (
+                                        <div className="text-[10px] text-red-400 bg-red-900/10 p-2 rounded border border-red-900/20">
+                                            <div className="font-bold mb-1 uppercase">Error Encountered:</div>
+                                            {error}
+                                            {error.includes("billed users") && (
+                                                <div className="mt-1 text-gray-400">Try using a different model or enabling billing in Google Cloud Console.</div>
+                                            )}
+                                        </div>
+                                    )}
                                     <button 
                                         onClick={handleExecute}
                                         disabled={loading || !prompt.trim()}
